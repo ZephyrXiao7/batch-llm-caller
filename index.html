@@ -369,10 +369,7 @@
         }
 
         if (!response.ok) {
-          const message = data && data.error && data.error.message
-            ? data.error.message
-            : `Request failed with status ${response.status}`;
-          throw new Error(message);
+          throw new Error(formatApiError(response.status, data, responseText));
         }
 
         return data && data.choices && data.choices[0] && data.choices[0].message
@@ -387,6 +384,29 @@
 
         return `Error: ${message}`;
       }
+    }
+
+    function formatApiError(status, data, responseText) {
+      if (!data || !data.error) {
+        return `Request failed with status ${status}: ${responseText}`;
+      }
+
+      const details = [`Request failed with status ${status}`];
+      const error = data.error;
+
+      if (error.message) {
+        details.push(error.message);
+      }
+
+      if (error.code) {
+        details.push(`Code: ${error.code}`);
+      }
+
+      if (error.metadata) {
+        details.push(`Metadata: ${JSON.stringify(error.metadata)}`);
+      }
+
+      return details.join("\n");
     }
 
     function renderResult(result) {
