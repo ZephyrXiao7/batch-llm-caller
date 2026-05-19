@@ -202,8 +202,18 @@
       </label>
 
       <label>
+        API URL
+        <input id="apiUrl" type="text" value="http://localhost:1234/v1/chat/completions">
+      </label>
+
+      <label>
+        API Key
+        <input id="apiKey" type="password">
+      </label>
+
+      <label>
         Model name
-        <input id="modelName" type="text" value="qwen3.5-0.8b">
+        <input id="modelName" type="text" value="qwen3.5-0.8b" placeholder="qwen3.5-0.8b (LM Studio), gemini-2.5-flash (Google AI Studio), meta-llama/llama-3.3-70b-instruct:free (OpenRouter)">
       </label>
 
       <button id="runButton" type="submit">Run</button>
@@ -222,11 +232,11 @@
   </main>
 
   <script>
-    const API_URL = "http://localhost:1234/v1/chat/completions";
-
     const form = document.getElementById("batchForm");
     const systemPromptInput = document.getElementById("systemPrompt");
     const promptFileInput = document.getElementById("promptFile");
+    const apiUrlInput = document.getElementById("apiUrl");
+    const apiKeyInput = document.getElementById("apiKey");
     const modelNameInput = document.getElementById("modelName");
     const runButton = document.getElementById("runButton");
     const statusArea = document.getElementById("status");
@@ -239,6 +249,8 @@
       event.preventDefault();
 
       const file = promptFileInput.files[0];
+      const apiUrl = apiUrlInput.value.trim();
+      const apiKey = apiKeyInput.value.trim();
       const model = modelNameInput.value.trim();
 
       if (!file) {
@@ -248,6 +260,11 @@
 
       if (!model) {
         setStatus("Please enter a model name.", true);
+        return;
+      }
+
+      if (!apiUrl) {
+        setStatus("Please enter an API URL.", true);
         return;
       }
 
@@ -276,6 +293,8 @@
           setStatus(`Processing ${rowNumber} of ${prompts.length}...`);
 
           const response = await callChatCompletions({
+            apiUrl,
+            apiKey,
             model,
             systemPrompt: systemPromptInput.value,
             input
@@ -318,13 +337,19 @@
       });
     }
 
-    async function callChatCompletions({ model, systemPrompt, input }) {
+    async function callChatCompletions({ apiUrl, apiKey, model, systemPrompt, input }) {
       try {
-        const response = await fetch(API_URL, {
+        const headers = {
+          "Content-Type": "application/json"
+        };
+
+        if (apiKey) {
+          headers.Authorization = `Bearer ${apiKey}`;
+        }
+
+        const response = await fetch(apiUrl, {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json"
-          },
+          headers,
           body: JSON.stringify({
             model,
             messages: [
@@ -357,7 +382,7 @@
         const message = error.message || String(error);
 
         if (message === "Failed to fetch" || message.includes("NetworkError")) {
-          return `Error: Could not reach LM Studio at ${API_URL}. Make sure the LM Studio server is running.`;
+          return `Error: Could not reach the API at ${apiUrl}. Check the URL, server, and browser CORS access.`;
         }
 
         return `Error: ${message}`;
