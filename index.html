@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LLM batch caller</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f7f7f4;
+      --panel: #ffffff;
+      --text: #1f2933;
+      --muted: #5c6670;
+      --border: #d8ddd7;
+      --accent: #176b87;
+      --accent-dark: #11536a;
+      --error: #9f2f2f;
+      --shadow: 0 14px 38px rgba(31, 41, 51, 0.08);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      line-height: 1.5;
+    }
+
+    main {
+      width: min(100% - 32px, 720px);
+      margin: 48px auto;
+      padding: 32px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+    }
+
+    h1 {
+      margin: 0 0 28px;
+      font-size: clamp(2rem, 5vw, 2.7rem);
+      line-height: 1.1;
+      letter-spacing: 0;
+    }
+
+    form {
+      display: grid;
+      gap: 22px;
+    }
+
+    label {
+      display: grid;
+      gap: 8px;
+      font-weight: 700;
+    }
+
+    textarea,
+    input[type="text"],
+    input[type="file"] {
+      width: 100%;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: #fff;
+      color: var(--text);
+      font: inherit;
+    }
+
+    textarea,
+    input[type="text"] {
+      padding: 12px 14px;
+    }
+
+    textarea {
+      min-height: 132px;
+      resize: vertical;
+    }
+
+    input[type="file"] {
+      padding: 10px;
+    }
+
+    button {
+      justify-self: start;
+      min-height: 44px;
+      padding: 0 18px;
+      border: 0;
+      border-radius: 6px;
+      background: var(--accent);
+      color: #fff;
+      font: inherit;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    button:hover:not(:disabled) {
+      background: var(--accent-dark);
+    }
+
+    button:disabled {
+      cursor: not-allowed;
+      opacity: 0.58;
+    }
+
+    .section {
+      margin-top: 30px;
+    }
+
+    .section h2 {
+      margin: 0 0 12px;
+      font-size: 1.1rem;
+      letter-spacing: 0;
+    }
+
+    #status {
+      min-height: 52px;
+      padding: 14px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: #fbfbf9;
+      color: var(--muted);
+      white-space: pre-wrap;
+    }
+
+    #status.error {
+      color: var(--error);
+    }
+
+    #results {
+      display: grid;
+      gap: 14px;
+    }
+
+    .result {
+      padding: 14px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: #fbfbf9;
+    }
+
+    .result-row {
+      margin: 0 0 10px;
+      color: var(--muted);
+      font-size: 0.92rem;
+      font-weight: 700;
+    }
+
+    .result-grid {
+      display: grid;
+      gap: 10px;
+    }
+
+    .result-label {
+      display: block;
+      margin-bottom: 3px;
+      color: var(--muted);
+      font-size: 0.82rem;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+
+    .result-text {
+      margin: 0;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
+    #downloadCsv {
+      display: none;
+      margin-top: 18px;
+    }
+
+    @media (max-width: 560px) {
+      main {
+        width: min(100% - 20px, 720px);
+        margin: 20px auto;
+        padding: 22px;
+      }
+
+      button {
+        width: 100%;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>LLM batch caller</h1>
+
+    <form id="batchForm">
+      <label>
+        System prompt
+        <textarea id="systemPrompt" placeholder="Paste the system prompt here"></textarea>
+      </label>
+
+      <label>
+        Prompt file
+        <input id="promptFile" type="file" accept=".txt,.csv,text/plain,text/csv">
+      </label>
+
+      <label>
+        Model name
+        <input id="modelName" type="text" value="qwen3.5-0.8b">
+      </label>
+
+      <button id="runButton" type="submit">Run</button>
+    </form>
+
+    <section class="section" aria-live="polite">
+      <h2>Status</h2>
+      <div id="status">Choose a file, then run the batch.</div>
+    </section>
+
+    <section class="section">
+      <h2>Results</h2>
+      <div id="results"></div>
+      <button id="downloadCsv" type="button">Download CSV</button>
+    </section>
+  </main>
+
+  <script>
+    const API_URL = "http://localhost:1234/v1/chat/completions";
+
+    const form = document.getElementById("batchForm");
+    const systemPromptInput = document.getElementById("systemPrompt");
+    const promptFileInput = document.getElementById("promptFile");
+    const modelNameInput = document.getElementById("modelName");
+    const runButton = document.getElementById("runButton");
+    const statusArea = document.getElementById("status");
+    const resultsArea = document.getElementById("results");
+    const downloadButton = document.getElementById("downloadCsv");
+
+    let results = [];
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+
+      const file = promptFileInput.files[0];
+      const model = modelNameInput.value.trim();
+
+      if (!file) {
+        setStatus("Please choose a .txt or .csv file first.", true);
+        return;
+      }
+
+      if (!model) {
+        setStatus("Please enter a model name.", true);
+        return;
+      }
+
+      runButton.disabled = true;
+      downloadButton.style.display = "none";
+      results = [];
+      resultsArea.innerHTML = "";
+      setStatus("Reading file...");
+
+      try {
+        const fileText = await readFileAsText(file);
+        const prompts = fileText.split(/\r?\n/);
+
+        if (prompts[prompts.length - 1] === "") {
+          prompts.pop();
+        }
+
+        if (prompts.length === 0) {
+          setStatus("The file does not contain any prompts.", true);
+          return;
+        }
+
+        for (let index = 0; index < prompts.length; index++) {
+          const rowNumber = index + 1;
+          const input = prompts[index];
+          setStatus(`Processing ${rowNumber} of ${prompts.length}...`);
+
+          const response = await callChatCompletions({
+            model,
+            systemPrompt: systemPromptInput.value,
+            input
+          });
+
+          const result = { row_number: rowNumber, input, response };
+          results.push(result);
+          renderResult(result);
+          setStatus(`Processed ${rowNumber} of ${prompts.length}.`);
+        }
+
+        setStatus(`Complete. Processed ${results.length} line${results.length === 1 ? "" : "s"}.`);
+        downloadButton.style.display = "inline-block";
+      } catch (error) {
+        setStatus(error.message || String(error), true);
+      } finally {
+        runButton.disabled = false;
+      }
+    });
+
+    downloadButton.addEventListener("click", () => {
+      const csv = toCsv(results);
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "results.csv";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    });
+
+    function readFileAsText(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ""));
+        reader.onerror = () => reject(new Error("Could not read the selected file."));
+        reader.readAsText(file);
+      });
+    }
+
+    async function callChatCompletions({ model, systemPrompt, input }) {
+      try {
+        const response = await fetch(API_URL, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            model,
+            messages: [
+              { role: "system", content: systemPrompt },
+              { role: "user", content: input }
+            ]
+          })
+        });
+
+        const responseText = await response.text();
+        let data = null;
+
+        try {
+          data = responseText ? JSON.parse(responseText) : null;
+        } catch (parseError) {
+          throw new Error(`Invalid JSON response: ${responseText}`);
+        }
+
+        if (!response.ok) {
+          const message = data && data.error && data.error.message
+            ? data.error.message
+            : `Request failed with status ${response.status}`;
+          throw new Error(message);
+        }
+
+        return data && data.choices && data.choices[0] && data.choices[0].message
+          ? data.choices[0].message.content || ""
+          : "";
+      } catch (error) {
+        const message = error.message || String(error);
+
+        if (message === "Failed to fetch" || message.includes("NetworkError")) {
+          return `Error: Could not reach LM Studio at ${API_URL}. Make sure the LM Studio server is running.`;
+        }
+
+        return `Error: ${message}`;
+      }
+    }
+
+    function renderResult(result) {
+      const item = document.createElement("article");
+      item.className = "result";
+
+      const row = document.createElement("p");
+      row.className = "result-row";
+      row.textContent = `Row ${result.row_number}`;
+
+      const grid = document.createElement("div");
+      grid.className = "result-grid";
+
+      grid.appendChild(renderTextBlock("Input", result.input));
+      grid.appendChild(renderTextBlock("Response", result.response));
+
+      item.appendChild(row);
+      item.appendChild(grid);
+      resultsArea.appendChild(item);
+    }
+
+    function renderTextBlock(label, text) {
+      const wrapper = document.createElement("div");
+      const labelEl = document.createElement("span");
+      const textEl = document.createElement("p");
+
+      labelEl.className = "result-label";
+      labelEl.textContent = label;
+      textEl.className = "result-text";
+      textEl.textContent = text;
+
+      wrapper.appendChild(labelEl);
+      wrapper.appendChild(textEl);
+      return wrapper;
+    }
+
+    function toCsv(rows) {
+      const header = ["row_number", "input", "response"];
+      const lines = [
+        header.join(","),
+        ...rows.map((row) => [
+          row.row_number,
+          row.input,
+          row.response
+        ].map(escapeCsvField).join(","))
+      ];
+
+      return lines.join("\n");
+    }
+
+    function escapeCsvField(value) {
+      const text = String(value == null ? "" : value);
+      const escaped = text.replace(/"/g, '""');
+      return /[",\n\r]/.test(escaped) ? `"${escaped}"` : escaped;
+    }
+
+    function setStatus(message, isError = false) {
+      statusArea.textContent = message;
+      statusArea.classList.toggle("error", isError);
+    }
+  </script>
+</body>
+</html>
